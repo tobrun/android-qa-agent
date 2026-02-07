@@ -1,0 +1,4 @@
+.android-qa/
+__pycache__/
+screen.png
+dump.xml

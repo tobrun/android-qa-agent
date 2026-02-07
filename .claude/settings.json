@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -f .android-qa/active-session.json ]; then ./stop-recording; fi"
+          }
+        ]
+      }
+    ]
+  }
+}

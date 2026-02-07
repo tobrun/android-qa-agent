@@ -1,0 +1,92 @@
+#!/usr/bin/env python3
+"""Replay a finalized Android QA recording at configurable speed."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+import time
+from datetime import datetime
+
+
+def find_adb():
+    """Locate the real adb binary: $ANDROID_HOME/platform-tools/adb, then PATH."""
+    android_home = os.environ.get("ANDROID_HOME")
+    if android_home:
+        adb_path = os.path.join(android_home, "platform-tools", "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        adb_path = os.path.join(directory, "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    return None
+
+
+def parse_timestamp(ts):
+    """Parse ISO 8601 timestamp (Python 3.8 compatible)."""
+    # Strip trailing Z and parse
+    ts = ts.rstrip("Z")
+    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f")
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Replay a finalized Android QA recording.")
+    parser.add_argument("recording", help="Path to a .json recording, or a session name (looked up in .android-qa/recordings/)")
+    parser.add_argument("--speed", type=float, default=1.0, help="Speed multiplier (default: 1.0)")
+    args = parser.parse_args()
+
+    if args.speed <= 0:
+        print("Error: speed must be greater than 0.", file=sys.stderr)
+        sys.exit(1)
+
+    # Find adb
+    adb = find_adb()
+    if adb is None:
+        print("Error: adb not found. Set ANDROID_HOME or add adb to PATH.", file=sys.stderr)
+        sys.exit(1)
+
+    # Resolve recording path
+    recording_arg = args.recording
+    if os.sep in recording_arg or recording_arg.endswith(".json"):
+        json_path = recording_arg
+    else:
+        json_path = os.path.join("recordings", recording_arg + ".json")
+
+    if not os.path.exists(json_path):
+        print("Error: recording not found: %s" % json_path, file=sys.stderr)
+        sys.exit(1)
+
+    with open(json_path, "r") as f:
+        recording = json.load(f)
+
+    commands = recording["commands"]
+    if not commands:
+        sys.exit(0)
+
+    # Execute first command immediately
+    result = subprocess.run([adb] + commands[0]["args"])
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+
+    # Execute remaining commands with timing
+    for i in range(1, len(commands)):
+        prev_ts = parse_timestamp(commands[i - 1]["issued_at"])
+        curr_ts = parse_timestamp(commands[i]["issued_at"])
+        gap_seconds = (curr_ts - prev_ts).total_seconds()
+        delay = gap_seconds / args.speed
+        if delay > 0:
+            time.sleep(delay)
+
+        result = subprocess.run([adb] + commands[i]["args"])
+        if result.returncode != 0:
+            sys.exit(result.returncode)
+
+    sys.exit(0)
+
+
+if __name__ == "__main__":
+    main()

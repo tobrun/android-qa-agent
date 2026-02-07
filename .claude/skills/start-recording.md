@@ -1,0 +1,11 @@
+Start a new Android QA recording session.
+
+Derive a session name from the test scenario context (e.g., `login-flow`, `checkout-happy-path`). The name must only contain letters, numbers, hyphens, and underscores.
+
+Run:
+
+```bash
+./start-recording <session-name>
+```
+
+If a session is already active, it will be auto-stopped and finalized before the new one begins.

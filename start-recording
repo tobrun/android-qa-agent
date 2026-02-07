@@ -1,0 +1,127 @@
+#!/usr/bin/env python3
+"""Start a new Android QA recording session."""
+
+import argparse
+import json
+import os
+import re
+import sys
+import warnings
+from datetime import datetime
+
+
+BASE_DIR = ".android-qa"
+LOCK_FILE = os.path.join(BASE_DIR, "active-session.json")
+RECORDINGS_DIR = "recordings"
+
+
+def utcnow():
+    """Get current UTC time (suppresses deprecation warning on Python 3.12+)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return datetime.utcnow()
+
+
+def format_timestamp(dt):
+    """Format a datetime as ISO 8601 with millisecond precision."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + dt.strftime("%f")[:3] + "Z"
+
+
+def finalize_session(lock_data):
+    """Finalize the current recording session: convert .jsonl to .json and clean up."""
+    session_name = lock_data["session_name"]
+    jsonl_path = lock_data["output_path"]
+    json_path = os.path.join(RECORDINGS_DIR, session_name + ".json")
+
+    commands = []
+    if os.path.exists(jsonl_path):
+        with open(jsonl_path, "r") as f:
+            for line_num, line in enumerate(f, 1):
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    commands.append(json.loads(line))
+                except json.JSONDecodeError:
+                    print(
+                        "Warning: skipping corrupt line %d in %s"
+                        % (line_num, jsonl_path),
+                        file=sys.stderr,
+                    )
+
+    started_at = lock_data.get("started_at", format_timestamp(utcnow()))
+    if commands:
+        started_at = commands[0]["issued_at"]
+        completed_at = commands[-1]["issued_at"]
+    else:
+        completed_at = started_at
+
+    recording = {
+        "metadata": {
+            "name": session_name,
+            "started_at": started_at,
+            "completed_at": completed_at,
+            "command_count": len(commands),
+        },
+        "commands": commands,
+    }
+
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    with open(json_path, "w") as f:
+        json.dump(recording, f, indent=2)
+        f.write("\n")
+
+    if os.path.exists(jsonl_path):
+        os.remove(jsonl_path)
+    if os.path.exists(LOCK_FILE):
+        os.remove(LOCK_FILE)
+
+    return len(commands)
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Start a new Android QA recording session.")
+    parser.add_argument("session_name", help="Name for the recording session")
+    args = parser.parse_args()
+
+    session_name = args.session_name
+
+    if not re.match(r"^[a-zA-Z0-9_-]+$", session_name):
+        print("Error: session name must match [a-zA-Z0-9_-]+", file=sys.stderr)
+        sys.exit(1)
+
+    # Auto-stop existing session if lock file exists
+    if os.path.exists(LOCK_FILE):
+        with open(LOCK_FILE, "r") as f:
+            old_lock = json.load(f)
+        old_name = old_lock["session_name"]
+        count = finalize_session(old_lock)
+        print("Auto-stopped session '%s' (%d commands recorded)." % (old_name, count))
+
+    # Create directories
+    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+
+    # Write lock file
+    now = utcnow()
+    started_at = format_timestamp(now)
+    output_path = os.path.join(RECORDINGS_DIR, session_name + ".jsonl")
+
+    lock_data = {
+        "session_name": session_name,
+        "output_path": output_path,
+        "started_at": started_at,
+    }
+    with open(LOCK_FILE, "w") as f:
+        json.dump(lock_data, f, indent=2)
+        f.write("\n")
+
+    # Create/truncate the .jsonl file
+    with open(output_path, "w") as f:
+        pass
+
+    print("Recording started: '%s'" % session_name)
+    print("Recording to: %s" % output_path)
+
+
+if __name__ == "__main__":
+    main()

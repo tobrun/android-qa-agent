@@ -1,0 +1,100 @@
+#!/usr/bin/env python3
+"""ADB wrapper that transparently records all commands during an active session.
+
+Note: streaming adb commands (logcat, shell top, etc.) are not supported.
+Use the real adb binary directly for those.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+import warnings
+from datetime import datetime
+
+
+BASE_DIR = ".android-qa"
+LOCK_FILE = os.path.join(BASE_DIR, "active-session.json")
+
+
+def utcnow():
+    """Get current UTC time (suppresses deprecation warning on Python 3.12+)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return datetime.utcnow()
+
+
+def format_timestamp(dt):
+    """Format a datetime as ISO 8601 with millisecond precision."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + dt.strftime("%f")[:3] + "Z"
+
+
+def find_adb():
+    """Locate the real adb binary: $ANDROID_HOME/platform-tools/adb, then PATH."""
+    android_home = os.environ.get("ANDROID_HOME")
+    if android_home:
+        adb_path = os.path.join(android_home, "platform-tools", "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    # Search PATH
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        adb_path = os.path.join(directory, "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    return None
+
+
+def main():
+    # Check for active recording session
+    if not os.path.exists(LOCK_FILE):
+        print("Error: no active recording session. Run start-recording first.", file=sys.stderr)
+        sys.exit(1)
+
+    with open(LOCK_FILE, "r") as f:
+        lock_data = json.load(f)
+
+    output_path = lock_data["output_path"]
+
+    # Find adb
+    adb = find_adb()
+    if adb is None:
+        print("Error: adb not found. Set ANDROID_HOME or add adb to PATH.", file=sys.stderr)
+        sys.exit(1)
+
+    # Build command
+    adb_args = sys.argv[1:]
+    cmd = [adb] + adb_args
+
+    # Record issued_at and execute
+    now = utcnow()
+    issued_at = format_timestamp(now)
+    start_time = time.monotonic()
+
+    exit_code = 0
+    try:
+        result = subprocess.run(cmd)
+        exit_code = result.returncode
+    except KeyboardInterrupt:
+        exit_code = 130
+
+    elapsed = time.monotonic() - start_time
+    duration_ms = int(elapsed * 1000)
+
+    # Append entry to .jsonl
+    entry = {
+        "issued_at": issued_at,
+        "args": adb_args,
+        "exit_code": exit_code,
+        "duration_ms": duration_ms,
+    }
+    with open(output_path, "a") as f:
+        f.write(json.dumps(entry) + "\n")
+
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
