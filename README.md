@@ -28,14 +28,14 @@ Claude will:
 ## Replay
 
 ```bash
-./android-qa-replay .android-qa/recordings/my-session.json --speed 5
+./android-qa-replay my-session --speed 5
 ```
 
 Replay preserves relative timing between commands, compressed by the speed factor. It aborts on the first command failure.
 
 ## Recording Format
 
-Finalized recordings are stored at `.android-qa/recordings/<session>.json`:
+Finalized recordings are stored at `recordings/<session>.json`:
 
 ```json
 {
@@ -64,13 +64,14 @@ android-qa-agent/
 ├── android-qa-replay       # Replay tool (Python, executable)
 ├── start-recording         # Session start script
 ├── stop-recording          # Session stop script
+├── recordings/             # Finalized recordings (committable)
 ├── CLAUDE.md               # Claude Code system prompt
 ├── .claude/
 │   ├── settings.json       # Stop hook for auto-finalizing sessions
 │   └── skills/             # Claude Code skills
 └── .android-qa/            # Created at runtime
     ├── active-session.json # Lock file (only during recording)
-    └── recordings/         # Finalized recordings
+    └── artifacts/          # Screenshots and UI dumps
 ```
 
 ## Limitations
