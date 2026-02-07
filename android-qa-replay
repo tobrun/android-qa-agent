@@ -7,7 +7,18 @@ import os
 import subprocess
 import sys
 import time
+import warnings
 from datetime import datetime
+
+
+RECORDINGS_DIR = "recordings"
+
+# Commands that are observation-only and should be skipped during replay.
+OBSERVATION_PREFIXES = [
+    ["shell", "screencap"],
+    ["shell", "uiautomator", "dump"],
+    ["pull"],
+]
 
 
 def find_adb():
@@ -26,6 +37,18 @@ def find_adb():
     return None
 
 
+def utcnow():
+    """Get current UTC time (suppresses deprecation warning on Python 3.12+)."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", DeprecationWarning)
+        return datetime.utcnow()
+
+
+def format_timestamp(dt):
+    """Format a datetime as ISO 8601 with millisecond precision."""
+    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + dt.strftime("%f")[:3] + "Z"
+
+
 def parse_timestamp(ts):
     """Parse ISO 8601 timestamp (Python 3.8 compatible)."""
     # Strip trailing Z and parse
@@ -33,10 +56,142 @@ def parse_timestamp(ts):
     return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%f")
 
 
+def is_observation_command(args):
+    """Return True if the command is observation-only (screencap, dump, pull)."""
+    for prefix in OBSERVATION_PREFIXES:
+        if args[: len(prefix)] == prefix:
+            return True
+    return False
+
+
+def filter_commands(commands):
+    """Filter out observation commands, keeping only interactions."""
+    return [cmd for cmd in commands if not is_observation_command(cmd["args"])]
+
+
+def take_screenshot(adb, dest_path):
+    """Take a screenshot from the device and pull it to dest_path."""
+    os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    result = subprocess.run(
+        [adb, "shell", "screencap", "-p", "/sdcard/screen.png"],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        print("Error: failed to take screenshot on device.", file=sys.stderr)
+        return False
+    result = subprocess.run(
+        [adb, "pull", "/sdcard/screen.png", dest_path],
+        capture_output=True,
+    )
+    if result.returncode != 0:
+        print("Error: failed to pull screenshot from device.", file=sys.stderr)
+        return False
+    return True
+
+
+def verify(recording, json_path, adb):
+    """Run verification: compare golden screenshot to current device state."""
+    metadata = recording["metadata"]
+    session_name = metadata["name"]
+    golden_filename = metadata.get("golden_screenshot")
+
+    if not golden_filename:
+        print(
+            "Error: no golden screenshot in recording. "
+            "Cannot verify without a screenshot taken during recording.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    recordings_dir = os.path.dirname(json_path) or RECORDINGS_DIR
+    golden_path = os.path.join(recordings_dir, golden_filename)
+
+    if not os.path.exists(golden_path):
+        print("Error: golden screenshot not found: %s" % golden_path, file=sys.stderr)
+        sys.exit(1)
+
+    # Wait for the UI to settle after the last replayed command
+    time.sleep(2)
+
+    # Take a fresh screenshot
+    actual_filename = session_name + "-actual.png"
+    actual_path = os.path.join(recordings_dir, actual_filename)
+    if not take_screenshot(adb, actual_path):
+        sys.exit(1)
+
+    # Invoke claude -p for comparison
+    abs_golden = os.path.abspath(golden_path)
+    abs_actual = os.path.abspath(actual_path)
+    prompt = (
+        "You are verifying an Android UI test. "
+        "Read these two screenshot files using the Read tool:\n"
+        "  Expected (golden): %s\n"
+        "  Actual (replay):   %s\n"
+        "Do these show the same app state? Ignore transient differences like "
+        "the status bar clock, battery level, or notification indicators. "
+        'Respond with JSON only: {"pass": true, "reasoning": "brief explanation"}.'
+    ) % (abs_golden, abs_actual)
+
+    result = subprocess.run(
+        ["claude", "-p", prompt, "--allowedTools", "Read"],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print("Error: claude invocation failed.", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+
+    # Parse Claude's response — extract JSON from the output
+    response_text = result.stdout.strip()
+    try:
+        verdict = json.loads(response_text)
+    except json.JSONDecodeError:
+        # Try to find JSON in the response
+        import re
+
+        match = re.search(r"\{[^}]+\}", response_text)
+        if match:
+            verdict = json.loads(match.group())
+        else:
+            print("Error: could not parse Claude response as JSON:", file=sys.stderr)
+            print(response_text, file=sys.stderr)
+            sys.exit(1)
+
+    passed = verdict.get("pass", False)
+    reasoning = verdict.get("reasoning", "")
+
+    # Print human-readable summary
+    status = "PASS" if passed else "FAIL"
+    print("\nVerification: %s" % status)
+    print("Reasoning: %s" % reasoning)
+
+    # Save verification report
+    report = {
+        "pass": passed,
+        "reasoning": reasoning,
+        "golden_screenshot": golden_filename,
+        "actual_screenshot": actual_filename,
+        "verified_at": format_timestamp(utcnow()),
+    }
+
+    report_path = os.path.join(recordings_dir, session_name + "-verify.json")
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+        f.write("\n")
+
+    print("Report saved to: %s" % report_path)
+
+    sys.exit(0 if passed else 1)
+
+
 def main():
     parser = argparse.ArgumentParser(description="Replay a finalized Android QA recording.")
-    parser.add_argument("recording", help="Path to a .json recording, or a session name (looked up in .android-qa/recordings/)")
+    parser.add_argument("recording", help="Path to a .json recording, or a session name (looked up in recordings/)")
     parser.add_argument("--speed", type=float, default=1.0, help="Speed multiplier (default: 1.0)")
+    parser.add_argument("--verify", action="store_true", help="After replay, verify the result against the golden screenshot")
     args = parser.parse_args()
 
     if args.speed <= 0:
@@ -54,7 +209,7 @@ def main():
     if os.sep in recording_arg or recording_arg.endswith(".json"):
         json_path = recording_arg
     else:
-        json_path = os.path.join("recordings", recording_arg + ".json")
+        json_path = os.path.join(RECORDINGS_DIR, recording_arg + ".json")
 
     if not os.path.exists(json_path):
         print("Error: recording not found: %s" % json_path, file=sys.stderr)
@@ -63,27 +218,30 @@ def main():
     with open(json_path, "r") as f:
         recording = json.load(f)
 
-    commands = recording["commands"]
-    if not commands:
-        sys.exit(0)
+    # Filter out observation commands
+    commands = filter_commands(recording["commands"])
 
-    # Execute first command immediately
-    result = subprocess.run([adb] + commands[0]["args"])
-    if result.returncode != 0:
-        sys.exit(result.returncode)
-
-    # Execute remaining commands with timing
-    for i in range(1, len(commands)):
-        prev_ts = parse_timestamp(commands[i - 1]["issued_at"])
-        curr_ts = parse_timestamp(commands[i]["issued_at"])
-        gap_seconds = (curr_ts - prev_ts).total_seconds()
-        delay = gap_seconds / args.speed
-        if delay > 0:
-            time.sleep(delay)
-
-        result = subprocess.run([adb] + commands[i]["args"])
+    if commands:
+        # Execute first command immediately
+        result = subprocess.run([adb] + commands[0]["args"])
         if result.returncode != 0:
             sys.exit(result.returncode)
+
+        # Execute remaining commands with timing
+        for i in range(1, len(commands)):
+            prev_ts = parse_timestamp(commands[i - 1]["issued_at"])
+            curr_ts = parse_timestamp(commands[i]["issued_at"])
+            gap_seconds = (curr_ts - prev_ts).total_seconds()
+            delay = gap_seconds / args.speed
+            if delay > 0:
+                time.sleep(delay)
+
+            result = subprocess.run([adb] + commands[i]["args"])
+            if result.returncode != 0:
+                sys.exit(result.returncode)
+
+    if args.verify:
+        verify(recording, json_path, adb)
 
     sys.exit(0)
 

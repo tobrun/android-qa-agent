@@ -3,6 +3,7 @@
 
 import json
 import os
+import shutil
 import sys
 import warnings
 from datetime import datetime
@@ -54,13 +55,37 @@ def finalize_session(lock_data):
     else:
         completed_at = started_at
 
+    # Find the last screenshot: look for the last pull that follows a screencap
+    golden_screenshot = None
+    for i in range(len(commands) - 1, 0, -1):
+        cmd_args = commands[i]["args"]
+        prev_args = commands[i - 1]["args"]
+        if (
+            len(cmd_args) >= 3
+            and cmd_args[0] == "pull"
+            and len(prev_args) >= 2
+            and prev_args[0] == "shell"
+            and prev_args[1] == "screencap"
+        ):
+            local_path = cmd_args[-1]
+            if os.path.exists(local_path):
+                golden_filename = session_name + "-golden.png"
+                golden_dest = os.path.join(RECORDINGS_DIR, golden_filename)
+                shutil.copy2(local_path, golden_dest)
+                golden_screenshot = golden_filename
+            break
+
+    metadata = {
+        "name": session_name,
+        "started_at": started_at,
+        "completed_at": completed_at,
+        "command_count": len(commands),
+    }
+    if golden_screenshot:
+        metadata["golden_screenshot"] = golden_screenshot
+
     recording = {
-        "metadata": {
-            "name": session_name,
-            "started_at": started_at,
-            "completed_at": completed_at,
-            "command_count": len(commands),
-        },
+        "metadata": metadata,
         "commands": commands,
     }
 

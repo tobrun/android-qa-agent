@@ -65,13 +65,13 @@ android-qa-agent/
 ├── start-recording         # Session start script
 ├── stop-recording          # Session stop script
 ├── recordings/             # Finalized recordings (committable)
+├── artifacts/              # Screenshots and UI dumps (per session)
 ├── CLAUDE.md               # Claude Code system prompt
 ├── .claude/
 │   ├── settings.json       # Stop hook for auto-finalizing sessions
 │   └── skills/             # Claude Code skills
 └── .android-qa/            # Created at runtime
-    ├── active-session.json # Lock file (only during recording)
-    └── artifacts/          # Screenshots and UI dumps
+    └── active-session.json # Lock file (only during recording)
 ```
 
 ## Limitations
