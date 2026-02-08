@@ -1,6 +1,6 @@
 # Android QA Agent
 
-Record-and-replay QA tool for Android. Claude Code drives an Android emulator via natural language, and all ADB commands are transparently recorded for later replay.
+A record-and-replay QA tool for Android. Describe a test scenario in natural language, and Claude Code executes it on an Android device via ADB — transparently recording every command. Recordings can be replayed at configurable speed, with screenshot verification powered by Claude.
 
 ## Prerequisites
 
@@ -9,73 +9,87 @@ Record-and-replay QA tool for Android. Claude Code drives an Android emulator vi
 - A running Android emulator or connected device
 - [Claude Code](https://claude.com/claude-code)
 
-## Record
+## Getting Started
 
-Open Claude Code in this directory. The `CLAUDE.md` system prompt configures Claude as a QA engineer to use `android-qa` for all device interaction.
-Prompt a test scenario in natural language:
+Clone the repository:
+
+```bash
+git clone git@github.com:tobrun/android-qa-agent.git
+```
+
+Open Claude Code from the project directory:
+
+```bash
+cd android-qa-agent && claude
+```
+
+![Recording a QA session](example/record.gif)
+
+Prompt Claude Code with a QA scenario. The more detail you provide, the better the test output:
 
 ```
-> open the settings app and toggle dark mode
+open the settings app and toggle dark mode
 ```
 
 Claude will:
 
-1. Start a recording session
+1. Start a recording session, named after the scenario
 2. Take UI dumps to find accurate tap coordinates
-3. Execute the steps via `android-qa`
-4. Stop the recording when done
+3. Execute each step via `android-qa`, an ADB gateway that logs every command
+4. Claude returns execution and saves the recording to the `recordings/` directory
 
-## Replay
+Claude is generally good at reasoning about the UI and deciding next steps. Provide project-specific instructions in `CLAUDE.md` help guide it more efficiently.
+
+## Replay and Verification
+
+![Replaying a recording](example/replay.gif)
 
 ```bash
-./android-qa-replay my-session --speed 5
+./android-qa-replay my-session --speed 5 --verify
 ```
 
-Replay preserves relative timing between commands, compressed by the speed factor. It aborts on the first command failure.
+Replay preserves relative timing between commands, compressed by the speed factor, and aborts on the first command failure.
 
-## Recording Format
-
-Finalized recordings are stored at `recordings/<session>.json`:
-
-```json
-{
-  "metadata": {
-    "name": "login-flow",
-    "started_at": "2025-01-15T10:32:00.000Z",
-    "completed_at": "2025-01-15T10:33:45.000Z",
-    "command_count": 27
-  },
-  "commands": [
-    {
-      "issued_at": "2025-01-15T10:32:01.123Z",
-      "args": ["shell", "input", "tap", "540", "960"],
-      "exit_code": 0,
-      "duration_ms": 245
-    }
-  ]
-}
-```
+The `--verify` flag runs Claude in headless mode (`claude -p`) to compare the final screenshot from replay against the one captured during the original recording. This approach tolerates minor visual differences — such as the system clock or transient UI elements — that are unrelated to the test case.
 
 ## Project Structure
 
 ```
 android-qa-agent/
-├── android-qa              # ADB wrapper (Python, executable)
-├── android-qa-replay       # Replay tool (Python, executable)
+├── android-qa              # ADB wrapper that records commands (Python)
+├── android-qa-replay       # Replay tool with optional verification (Python)
 ├── start-recording         # Session start script
 ├── stop-recording          # Session stop script
-├── recordings/             # Finalized recordings (committable)
+├── recordings/             # Finalized recordings, per session (committable)
+│   └── <session>/
+│       ├── recording.json  # Commands and metadata (incl. original prompt)
+│       └── golden.png      # Last screenshot from the recording
 ├── artifacts/              # Screenshots and UI dumps (per session)
-├── CLAUDE.md               # Claude Code system prompt
+├── CLAUDE.md               # Claude Code project instructions
 ├── .claude/
 │   ├── settings.json       # Stop hook for auto-finalizing sessions
 │   └── skills/             # Claude Code skills
-└── .android-qa/            # Created at runtime
-    └── active-session.json # Lock file (only during recording)
+└── .android-qa/            # Runtime state
+    └── active-session.json # Lock file (exists only during recording)
 ```
 
 ## Limitations
 
-- Streaming ADB commands (`logcat`, `shell top`, etc.) are not supported. 
+- Streaming ADB commands (`logcat`, `shell top`, etc.) are not supported.
 - Single-threaded: one `android-qa` invocation at a time.
 - No stdout/stderr capture — only the command and its metadata are recorded.
+
+## Roadmap
+
+- [ ] Multi-device support (current MVP works only on a single ADB device)
+- [ ] Multi-step verification — verify screenshots at every step, not just the final result
+- [ ] App state cleanup — start each recording and replay from a known fresh state
+- [ ] UI dump verification alongside screenshot comparison
+- [ ] Complex touch gestures — rotate, pinch, double-tap, and other multi-touch input
+- [ ] 3D content testing — `GLSurfaceView`/`TextureView` content is excluded from UI dumps, navigating purely by screenshot has limitations (incorrectly calculating touch points)
+
+Contributions are welcome — feel free to open a PR!
+
+## License
+
+This project is licensed under the [Apache License 2.0](LICENSE).

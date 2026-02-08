@@ -1,0 +1,7 @@
+{
+  "pass": true,
+  "reasoning": "Both screenshots show the same Contacts app state: John Doe's contact detail screen with the same name, phone number (+112345678), avatar, action buttons (Call, Message, Video), and contact settings. The only differences are the status bar clock (7:44 vs 8:27) and a transient 'John Doe saved' toast notification in the actual screenshot, both of which are ephemeral and do not indicate a different app state.",
+  "golden_screenshot": "golden.png",
+  "actual_screenshot": "actual.png",
+  "verified_at": "2026-02-08T19:28:08.495Z"
+}

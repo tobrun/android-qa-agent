@@ -20,6 +20,16 @@ OBSERVATION_PREFIXES = [
     ["pull"],
 ]
 
+# Minimum delay (seconds) between consecutive "shell input" commands (tap, text,
+# keyevent, swipe) to prevent character dropping and missed taps at high replay
+# speeds. Applied as a floor regardless of the --speed multiplier.
+MIN_DELAY_BETWEEN_INPUTS = 1.0
+
+
+def is_input_command(args):
+    """Return True if the command is a user-interaction input command."""
+    return len(args) >= 3 and args[0] == "shell" and args[1] == "input"
+
 
 def find_adb():
     """Locate the real adb binary: $ANDROID_HOME/platform-tools/adb, then PATH."""
@@ -103,25 +113,29 @@ def verify(recording, json_path, adb):
         )
         sys.exit(1)
 
-    recordings_dir = os.path.dirname(json_path) or RECORDINGS_DIR
-    golden_path = os.path.join(recordings_dir, golden_filename)
+    session_dir = os.path.dirname(json_path) or os.path.join(RECORDINGS_DIR, session_name)
+    golden_path = os.path.join(session_dir, golden_filename)
 
     if not os.path.exists(golden_path):
         print("Error: golden screenshot not found: %s" % golden_path, file=sys.stderr)
         sys.exit(1)
 
     # Wait for the UI to settle after the last replayed command
+    print("\nVerification: waiting 2s for UI to settle...")
     time.sleep(2)
 
     # Take a fresh screenshot
-    actual_filename = session_name + "-actual.png"
-    actual_path = os.path.join(recordings_dir, actual_filename)
+    actual_filename = "actual.png"
+    actual_path = os.path.join(session_dir, actual_filename)
+    print("Verification: capturing device screenshot...")
     if not take_screenshot(adb, actual_path):
         sys.exit(1)
 
     # Invoke claude -p for comparison
     abs_golden = os.path.abspath(golden_path)
     abs_actual = os.path.abspath(actual_path)
+    print("Verification: comparing screenshots (golden: %s, actual: %s)..." % (golden_filename, actual_filename))
+    print("Verification: invoking Claude for visual comparison (this may take a moment)...")
     prompt = (
         "You are verifying an Android UI test. "
         "Read these two screenshot files using the Read tool:\n"
@@ -177,7 +191,7 @@ def verify(recording, json_path, adb):
         "verified_at": format_timestamp(utcnow()),
     }
 
-    report_path = os.path.join(recordings_dir, session_name + "-verify.json")
+    report_path = os.path.join(session_dir, "verify.json")
     with open(report_path, "w") as f:
         json.dump(report, f, indent=2)
         f.write("\n")
@@ -209,7 +223,7 @@ def main():
     if os.sep in recording_arg or recording_arg.endswith(".json"):
         json_path = recording_arg
     else:
-        json_path = os.path.join(RECORDINGS_DIR, recording_arg + ".json")
+        json_path = os.path.join(RECORDINGS_DIR, recording_arg, "recording.json")
 
     if not os.path.exists(json_path):
         print("Error: recording not found: %s" % json_path, file=sys.stderr)
@@ -233,6 +247,12 @@ def main():
             curr_ts = parse_timestamp(commands[i]["issued_at"])
             gap_seconds = (curr_ts - prev_ts).total_seconds()
             delay = gap_seconds / args.speed
+
+            # Enforce minimum settle time between consecutive input commands
+            if (is_input_command(commands[i]["args"])
+                    and is_input_command(commands[i - 1]["args"])):
+                delay = max(delay, MIN_DELAY_BETWEEN_INPUTS)
+
             if delay > 0:
                 time.sleep(delay)
 

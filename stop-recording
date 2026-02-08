@@ -30,7 +30,8 @@ def finalize_session(lock_data):
     """Finalize the current recording session: convert .jsonl to .json and clean up."""
     session_name = lock_data["session_name"]
     jsonl_path = lock_data["output_path"]
-    json_path = os.path.join(RECORDINGS_DIR, session_name + ".json")
+    session_dir = os.path.join(RECORDINGS_DIR, session_name)
+    json_path = os.path.join(session_dir, "recording.json")
 
     commands = []
     if os.path.exists(jsonl_path):
@@ -69,10 +70,9 @@ def finalize_session(lock_data):
         ):
             local_path = cmd_args[-1]
             if os.path.exists(local_path):
-                golden_filename = session_name + "-golden.png"
-                golden_dest = os.path.join(RECORDINGS_DIR, golden_filename)
+                golden_dest = os.path.join(session_dir, "golden.png")
                 shutil.copy2(local_path, golden_dest)
-                golden_screenshot = golden_filename
+                golden_screenshot = "golden.png"
             break
 
     metadata = {
@@ -83,13 +83,16 @@ def finalize_session(lock_data):
     }
     if golden_screenshot:
         metadata["golden_screenshot"] = golden_screenshot
+    prompt = lock_data.get("prompt")
+    if prompt:
+        metadata["prompt"] = prompt
 
     recording = {
         "metadata": metadata,
         "commands": commands,
     }
 
-    os.makedirs(RECORDINGS_DIR, exist_ok=True)
+    os.makedirs(session_dir, exist_ok=True)
     with open(json_path, "w") as f:
         json.dump(recording, f, indent=2)
         f.write("\n")
@@ -113,7 +116,7 @@ def main():
     session_name = lock_data["session_name"]
     count = finalize_session(lock_data)
 
-    json_path = os.path.join(RECORDINGS_DIR, session_name + ".json")
+    json_path = os.path.join(RECORDINGS_DIR, session_name, "recording.json")
     print("Recording stopped: '%s' (%d commands recorded)." % (session_name, count))
     print("Saved to: %s" % json_path)
 

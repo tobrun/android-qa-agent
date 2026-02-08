@@ -5,7 +5,9 @@ Derive a session name from the test scenario context (e.g., `login-flow`, `check
 Run:
 
 ```bash
-./start-recording <session-name>
+./start-recording <session-name> --prompt "<original user prompt>"
 ```
+
+Always pass the user's original test scenario prompt via `--prompt` so it is retained in the recording metadata.
 
 If a session is already active, it will be auto-stopped and finalized before the new one begins.
