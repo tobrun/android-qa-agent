@@ -2,6 +2,9 @@
 
 A record-and-replay QA tool for Android. Describe a test scenario in natural language, and Claude Code executes it on an Android device via ADB — transparently recording every command. Recordings can be replayed at configurable speed, with screenshot verification powered by Claude.
 
+![Recording a QA session](example/record.gif)
+<sub>Open the contacts app, add a new contact with name John Doe and phone number +001 1234 5678</sub>
+
 ## Prerequisites
 
 - Python 3.8+
@@ -23,8 +26,6 @@ Open Claude Code from the project directory:
 cd android-qa-agent && claude
 ```
 
-![Recording a QA session](example/record.gif)
-
 Prompt Claude Code with a QA scenario. The more detail you provide, the better the test output:
 
 ```
@@ -38,7 +39,7 @@ Claude will:
 3. Execute each step via `android-qa`, an ADB gateway that logs every command
 4. Claude returns execution and saves the recording to the `recordings/` directory
 
-Claude is generally good at reasoning about the UI and deciding next steps. Provide project-specific instructions in `CLAUDE.md` help guide it more efficiently.
+Claude is generally good at reasoning about the UI and deciding next steps. Providing project-specific instructions in `CLAUDE.md` helps guide it more efficiently.
 
 ## Replay and Verification
 
