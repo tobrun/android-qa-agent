@@ -89,7 +89,7 @@ android-qa-agent/
 - [ ] Complex touch gestures — rotate, pinch, double-tap, and other multi-touch input
 - [ ] 3D content testing — `GLSurfaceView`/`TextureView` content is excluded from UI dumps, navigating purely by screenshot has limitations (incorrectly calculating touch points)
 - [x] Support for capturing performance metrics through `adb dumpsys`
-- [ ] Integrate tracing with https://frida.re/docs/android/
+- [x] Support for capturing perfetto traces
 
 Contributions are welcome — feel free to open a PR!
 
