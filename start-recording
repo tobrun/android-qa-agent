@@ -88,6 +88,9 @@ def finalize_session(lock_data):
     prompt = lock_data.get("prompt")
     if prompt:
         metadata["prompt"] = prompt
+    device_serial = lock_data.get("device_serial")
+    if device_serial:
+        metadata["device_serial"] = device_serial
 
     recording = {
         "metadata": metadata,
@@ -111,6 +114,7 @@ def main():
     parser = argparse.ArgumentParser(description="Start a new Android QA recording session.")
     parser.add_argument("session_name", help="Name for the recording session")
     parser.add_argument("--prompt", help="Original test scenario prompt")
+    parser.add_argument("--device", help="ADB device serial (from adb devices)")
     args = parser.parse_args()
 
     session_name = args.session_name
@@ -143,6 +147,8 @@ def main():
     }
     if args.prompt:
         lock_data["prompt"] = args.prompt
+    if args.device:
+        lock_data["device_serial"] = args.device
     with open(LOCK_FILE, "w") as f:
         json.dump(lock_data, f, indent=2)
         f.write("\n")

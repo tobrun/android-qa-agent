@@ -2,10 +2,19 @@ Start a new Android QA recording session.
 
 Derive a session name from the test scenario context (e.g., `login-flow`, `checkout-happy-path`). The name must only contain letters, numbers, hyphens, and underscores.
 
-Run:
+## Device Selection
+
+Before starting the recording, detect connected devices:
+
+1. Run `adb devices` and parse the output (skip the header line; each device line is `<serial>\tdevice`).
+2. **0 devices** → Tell the user: "No Android devices connected. Please connect a device and try again." Do not proceed.
+3. **1 device** → Auto-select it. Pass `--device <serial>` to `./start-recording`.
+4. **Multiple devices** → Use **AskUserQuestion** to let the user pick which device to target. Show each serial as an option, marking the first as "(Recommended)". Pass the chosen serial via `--device <serial>`.
+
+## Start the Session
 
 ```bash
-./start-recording <session-name> --prompt "<original user prompt>"
+./start-recording <session-name> --prompt "<original user prompt>" --device <serial>
 ```
 
 Always pass the user's original test scenario prompt via `--prompt` so it is retained in the recording metadata.
