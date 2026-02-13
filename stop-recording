@@ -3,7 +3,9 @@
 
 import json
 import os
+import re
 import shutil
+import subprocess
 import sys
 import warnings
 from datetime import datetime
@@ -24,6 +26,173 @@ def utcnow():
 def format_timestamp(dt):
     """Format a datetime as ISO 8601 with millisecond precision."""
     return dt.strftime("%Y-%m-%dT%H:%M:%S.") + dt.strftime("%f")[:3] + "Z"
+
+
+def find_adb():
+    """Locate the real adb binary: $ANDROID_HOME/platform-tools/adb, then PATH."""
+    android_home = os.environ.get("ANDROID_HOME")
+    if android_home:
+        adb_path = os.path.join(android_home, "platform-tools", "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    # Search PATH
+    for directory in os.environ.get("PATH", "").split(os.pathsep):
+        adb_path = os.path.join(directory, "adb")
+        if os.path.isfile(adb_path) and os.access(adb_path, os.X_OK):
+            return adb_path
+
+    return None
+
+
+def detect_package(commands):
+    """Scan recorded commands for first 'am start -n <pkg>/...' and extract package name."""
+    for cmd in commands:
+        args = cmd.get("args", [])
+        # Look for: shell am start -n <component>
+        if len(args) >= 4 and args[0] == "shell" and args[1] == "am" and args[2] == "start":
+            for i, arg in enumerate(args):
+                if arg == "-n" and i + 1 < len(args):
+                    component = args[i + 1]
+                    # Component is <package>/<activity>
+                    if "/" in component:
+                        return component.split("/")[0]
+    return None
+
+
+def parse_gfxinfo(output):
+    """Parse key metrics from 'dumpsys gfxinfo' output."""
+    metrics = {}
+
+    m = re.search(r"Total frames rendered:\s*(\d+)", output)
+    if m:
+        metrics["total_frames"] = int(m.group(1))
+
+    m = re.search(r"Janky frames:\s*(\d+)\s*\(([0-9.]+)%\)", output)
+    if m:
+        metrics["janky_frames"] = int(m.group(1))
+        metrics["janky_percent"] = float(m.group(2))
+
+    for label, key in [
+        ("50th percentile:", "percentile_50"),
+        ("90th percentile:", "percentile_90"),
+        ("95th percentile:", "percentile_95"),
+        ("99th percentile:", "percentile_99"),
+    ]:
+        m = re.search(re.escape(label) + r"\s*(\d+)ms", output)
+        if m:
+            metrics[key] = int(m.group(1))
+
+    m = re.search(r"Number Missed Vsync:\s*(\d+)", output)
+    if m:
+        metrics["missed_vsync"] = int(m.group(1))
+
+    m = re.search(r"Number Slow UI thread:\s*(\d+)", output)
+    if m:
+        metrics["slow_ui_thread"] = int(m.group(1))
+
+    return metrics
+
+
+def parse_meminfo(output):
+    """Parse key metrics from 'dumpsys meminfo <pkg>' output."""
+    metrics = {}
+
+    m = re.search(r"TOTAL PSS:\s*(\d+)", output)
+    if m:
+        metrics["total_pss_kb"] = int(m.group(1))
+    else:
+        m = re.search(r"TOTAL\s+(\d+)", output)
+        if m:
+            metrics["total_pss_kb"] = int(m.group(1))
+
+    m = re.search(r"Native Heap\s+(\d+)", output)
+    if m:
+        metrics["native_heap_pss_kb"] = int(m.group(1))
+
+    m = re.search(r"Dalvik Heap\s+(\d+)", output)
+    if m:
+        metrics["dalvik_heap_pss_kb"] = int(m.group(1))
+
+    return metrics
+
+
+def parse_cpuinfo(output, package):
+    """Parse CPU usage for a specific package from 'dumpsys cpuinfo' output."""
+    metrics = {}
+
+    # Format: "12.3% 1234/com.example.app: 8.1% user + 4.2% kernel"
+    pattern = r"([0-9.]+)%\s+\d+/" + re.escape(package) + r":\s+([0-9.]+)%\s+user\s*\+\s*([0-9.]+)%\s+kernel"
+    m = re.search(pattern, output)
+    if m:
+        metrics["total_cpu_percent"] = float(m.group(1))
+        metrics["user_cpu_percent"] = float(m.group(2))
+        metrics["kernel_cpu_percent"] = float(m.group(3))
+
+    return metrics
+
+
+def capture_performance(lock_data, commands, session_dir):
+    """Capture performance metrics via adb dumpsys and save to performance.json."""
+    package = detect_package(commands)
+    if not package:
+        print("Warning: no 'am start -n' command found — skipping performance capture.", file=sys.stderr)
+        return None
+
+    adb = find_adb()
+    if not adb:
+        print("Warning: adb not found — skipping performance capture.", file=sys.stderr)
+        return None
+
+    device_serial = lock_data.get("device_serial")
+    adb_base = [adb, "-s", device_serial] if device_serial else [adb]
+
+    raw = {}
+    parsed = {}
+
+    for metric_name, dumpsys_args in [
+        ("gfxinfo", ["shell", "dumpsys", "gfxinfo", package]),
+        ("meminfo", ["shell", "dumpsys", "meminfo", package]),
+        ("cpuinfo", ["shell", "dumpsys", "cpuinfo"]),
+    ]:
+        try:
+            result = subprocess.run(
+                adb_base + dumpsys_args,
+                capture_output=True, text=True, timeout=15,
+            )
+            raw[metric_name] = result.stdout
+        except (subprocess.TimeoutExpired, OSError) as e:
+            print("Warning: failed to capture %s: %s" % (metric_name, e), file=sys.stderr)
+            raw[metric_name] = ""
+
+    parsed["gfxinfo"] = parse_gfxinfo(raw.get("gfxinfo", ""))
+    parsed["meminfo"] = parse_meminfo(raw.get("meminfo", ""))
+    parsed["cpuinfo"] = parse_cpuinfo(raw.get("cpuinfo", ""), package)
+
+    now = utcnow()
+    perf_data = {
+        "package": package,
+        "captured_at": format_timestamp(now),
+        "metrics": parsed,
+        "raw": raw,
+    }
+
+    perf_path = os.path.join(session_dir, "performance.json")
+    with open(perf_path, "w") as f:
+        json.dump(perf_data, f, indent=2)
+        f.write("\n")
+
+    print("Performance metrics saved: %s" % perf_path)
+
+    # Return summary for recording metadata (without raw output)
+    summary = {"package": package}
+    if parsed["gfxinfo"]:
+        summary["gfxinfo"] = parsed["gfxinfo"]
+    if parsed["meminfo"]:
+        summary["meminfo"] = parsed["meminfo"]
+    if parsed["cpuinfo"]:
+        summary["cpuinfo"] = parsed["cpuinfo"]
+    return summary
 
 
 def finalize_session(lock_data):
@@ -89,6 +258,12 @@ def finalize_session(lock_data):
     device_serial = lock_data.get("device_serial")
     if device_serial:
         metadata["device_serial"] = device_serial
+
+    # Capture performance metrics if tracking was enabled
+    if lock_data.get("performance_tracking"):
+        perf_summary = capture_performance(lock_data, commands, session_dir)
+        if perf_summary:
+            metadata["performance"] = perf_summary
 
     recording = {
         "metadata": metadata,

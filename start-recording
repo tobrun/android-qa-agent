@@ -91,6 +91,8 @@ def finalize_session(lock_data):
     device_serial = lock_data.get("device_serial")
     if device_serial:
         metadata["device_serial"] = device_serial
+    if lock_data.get("performance_tracking"):
+        metadata["performance_tracking"] = True
 
     recording = {
         "metadata": metadata,
@@ -115,6 +117,7 @@ def main():
     parser.add_argument("session_name", help="Name for the recording session")
     parser.add_argument("--prompt", help="Original test scenario prompt")
     parser.add_argument("--device", help="ADB device serial (from adb devices)")
+    parser.add_argument("--perf", action="store_true", help="Enable performance tracking (gfxinfo/meminfo/cpuinfo)")
     args = parser.parse_args()
 
     session_name = args.session_name
@@ -149,6 +152,8 @@ def main():
         lock_data["prompt"] = args.prompt
     if args.device:
         lock_data["device_serial"] = args.device
+    if args.perf:
+        lock_data["performance_tracking"] = True
     with open(LOCK_FILE, "w") as f:
         json.dump(lock_data, f, indent=2)
         f.write("\n")
@@ -159,6 +164,8 @@ def main():
 
     print("Recording started: '%s'" % session_name)
     print("Recording to: %s" % output_path)
+    if args.perf:
+        print("Performance tracking: enabled")
 
 
 if __name__ == "__main__":
