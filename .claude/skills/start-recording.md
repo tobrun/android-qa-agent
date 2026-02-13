@@ -17,6 +17,12 @@ Check the user's prompt for any of these keywords (case-insensitive): "track per
 
 If any keyword matches, add `--perf` to the `./start-recording` command below.
 
+## Perfetto Tracing
+
+Check the user's prompt for any of these keywords (case-insensitive): "enable tracing", "systrace", "perfetto", "system trace", "capture trace", "trace the app", "tracing".
+
+If any keyword matches, add `--trace` to the `./start-recording` command below.
+
 ## Start the Session
 
 ```bash
@@ -24,6 +30,7 @@ If any keyword matches, add `--perf` to the `./start-recording` command below.
 ```
 
 Add `--perf` if performance tracking keywords were detected above.
+Add `--trace` if Perfetto tracing keywords were detected above.
 
 Always pass the user's original test scenario prompt via `--prompt` so it is retained in the recording metadata.
 
@@ -38,3 +45,11 @@ If `--perf` was used, after the first `am start -n <pkg>/<activity>` command, re
 ```
 
 Replace `<pkg>` with the package name from the `am start` component (the part before `/`). This command goes through `./android-qa` so it gets recorded and replays correctly.
+
+If `--trace` was used, after launching the app (and after the gfxinfo reset if `--perf` was also used), start the Perfetto trace in the background:
+
+```bash
+./android-qa shell perfetto -o /data/misc/perfetto-traces/trace.perfetto-trace -t 300s -d gfx view input am wm dalvik sched freq
+```
+
+The `-d` flag detaches immediately. The command is recorded in the session. The trace runs until `./stop-recording` stops it cleanly.

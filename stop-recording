@@ -7,6 +7,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 import warnings
 from datetime import datetime
 
@@ -14,6 +15,7 @@ from datetime import datetime
 BASE_DIR = ".android-qa"
 LOCK_FILE = os.path.join(BASE_DIR, "active-session.json")
 RECORDINGS_DIR = "recordings"
+PERFETTO_TRACE_DEVICE_PATH = "/data/misc/perfetto-traces/trace.perfetto-trace"
 
 
 def utcnow():
@@ -195,6 +197,70 @@ def capture_performance(lock_data, commands, session_dir):
     return summary
 
 
+def capture_perfetto_trace(lock_data, session_dir):
+    """Stop the running Perfetto trace, pull the file, and save metadata."""
+    adb = find_adb()
+    if not adb:
+        print("Warning: adb not found — skipping Perfetto trace capture.", file=sys.stderr)
+        return None
+
+    device_serial = lock_data.get("device_serial")
+    adb_base = [adb, "-s", device_serial] if device_serial else [adb]
+
+    # Try to stop perfetto gracefully (SIGTERM triggers clean flush)
+    try:
+        pid_result = subprocess.run(
+            adb_base + ["shell", "pidof", "perfetto"],
+            capture_output=True, text=True, timeout=10,
+        )
+        pid = pid_result.stdout.strip()
+        if pid:
+            subprocess.run(
+                adb_base + ["shell", "kill", pid],
+                capture_output=True, timeout=10,
+            )
+            time.sleep(2)
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print("Warning: failed to stop perfetto: %s" % e, file=sys.stderr)
+
+    # Always attempt pull — trace file may exist even if process already exited
+    local_trace_path = os.path.join(session_dir, "trace.perfetto-trace")
+    try:
+        result = subprocess.run(
+            adb_base + ["pull", PERFETTO_TRACE_DEVICE_PATH, local_trace_path],
+            capture_output=True, text=True, timeout=30,
+        )
+        if result.returncode != 0:
+            print("Warning: failed to pull Perfetto trace: %s" % result.stderr.strip(), file=sys.stderr)
+            return None
+    except (subprocess.TimeoutExpired, OSError) as e:
+        print("Warning: failed to pull Perfetto trace: %s" % e, file=sys.stderr)
+        return None
+
+    # Clean up on device
+    try:
+        subprocess.run(
+            adb_base + ["shell", "rm", "-f", PERFETTO_TRACE_DEVICE_PATH],
+            capture_output=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        pass
+
+    file_size = os.path.getsize(local_trace_path) if os.path.exists(local_trace_path) else 0
+    now = utcnow()
+    summary = {
+        "trace_file": "trace.perfetto-trace",
+        "size_bytes": file_size,
+        "captured_at": format_timestamp(now),
+        "viewer_url": "https://ui.perfetto.dev",
+    }
+
+    print("Perfetto trace saved: %s (%d bytes)" % (local_trace_path, file_size))
+    print("View at: https://ui.perfetto.dev")
+
+    return summary
+
+
 def finalize_session(lock_data):
     """Finalize the current recording session: convert .jsonl to .json and clean up."""
     session_name = lock_data["session_name"]
@@ -264,6 +330,12 @@ def finalize_session(lock_data):
         perf_summary = capture_performance(lock_data, commands, session_dir)
         if perf_summary:
             metadata["performance"] = perf_summary
+
+    # Capture Perfetto trace if tracing was enabled
+    if lock_data.get("perfetto_tracing"):
+        trace_summary = capture_perfetto_trace(lock_data, session_dir)
+        if trace_summary:
+            metadata["perfetto"] = trace_summary
 
     recording = {
         "metadata": metadata,

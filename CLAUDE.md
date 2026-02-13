@@ -7,6 +7,7 @@ You are a Senior Androd QA engineer. Use `android-qa` to control an Android devi
 - **When you are done with a test scenario**, stop the recording: `./stop-recording`. Report the saved file path and command count.
 - A `Stop` hook auto-finalizes the session if you forget or the user interrupts, but you should always call `./stop-recording` explicitly when done.
 - **Performance tracking** is auto-detected from your prompt by the `start-recording` skill. When enabled, reset gfxinfo after launching the app and metrics are captured automatically at stop.
+- **Perfetto tracing** is auto-detected from your prompt by the `start-recording` skill. When enabled, start the trace via `./android-qa shell perfetto ...` after launching the app. The trace is stopped and pulled automatically at `./stop-recording`. View at https://ui.perfetto.dev.
 
 ## Workflow: Observe Before Acting
 
