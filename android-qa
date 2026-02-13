@@ -64,9 +64,13 @@ def main():
         print("Error: adb not found. Set ANDROID_HOME or add adb to PATH.", file=sys.stderr)
         sys.exit(1)
 
-    # Build command
+    # Build command — inject -s <serial> if a device was selected at session start
     adb_args = sys.argv[1:]
-    cmd = [adb] + adb_args
+    device_serial = lock_data.get("device_serial")
+    if device_serial:
+        cmd = [adb, "-s", device_serial] + adb_args
+    else:
+        cmd = [adb] + adb_args
 
     # Record issued_at and execute
     now = utcnow()

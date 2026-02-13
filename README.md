@@ -82,7 +82,7 @@ android-qa-agent/
 
 ## Roadmap
 
-- [ ] Multi-device support (current MVP works only on a single ADB device)
+- [x] Multi-device support (current MVP works only on a single ADB device)
 - [ ] Multi-step verification — verify screenshots at every step, not just the final result
 - [ ] App state cleanup — start each recording and replay from a known fresh state
 - [ ] UI dump verification alongside screenshot comparison

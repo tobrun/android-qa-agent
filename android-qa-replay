@@ -79,18 +79,26 @@ def filter_commands(commands):
     return [cmd for cmd in commands if not is_observation_command(cmd["args"])]
 
 
-def take_screenshot(adb, dest_path):
+def adb_cmd(adb, device_serial=None):
+    """Return the base adb command list, with -s <serial> if specified."""
+    if device_serial:
+        return [adb, "-s", device_serial]
+    return [adb]
+
+
+def take_screenshot(adb, dest_path, device_serial=None):
     """Take a screenshot from the device and pull it to dest_path."""
     os.makedirs(os.path.dirname(dest_path), exist_ok=True)
+    base = adb_cmd(adb, device_serial)
     result = subprocess.run(
-        [adb, "shell", "screencap", "-p", "/sdcard/screen.png"],
+        base + ["shell", "screencap", "-p", "/sdcard/screen.png"],
         capture_output=True,
     )
     if result.returncode != 0:
         print("Error: failed to take screenshot on device.", file=sys.stderr)
         return False
     result = subprocess.run(
-        [adb, "pull", "/sdcard/screen.png", dest_path],
+        base + ["pull", "/sdcard/screen.png", dest_path],
         capture_output=True,
     )
     if result.returncode != 0:
@@ -99,7 +107,7 @@ def take_screenshot(adb, dest_path):
     return True
 
 
-def verify(recording, json_path, adb):
+def verify(recording, json_path, adb, device_serial=None):
     """Run verification: compare golden screenshot to current device state."""
     metadata = recording["metadata"]
     session_name = metadata["name"]
@@ -128,7 +136,7 @@ def verify(recording, json_path, adb):
     actual_filename = "actual.png"
     actual_path = os.path.join(session_dir, actual_filename)
     print("Verification: capturing device screenshot...")
-    if not take_screenshot(adb, actual_path):
+    if not take_screenshot(adb, actual_path, device_serial):
         sys.exit(1)
 
     # Invoke claude -p for comparison
@@ -206,6 +214,7 @@ def main():
     parser.add_argument("recording", help="Path to a .json recording, or a session name (looked up in recordings/)")
     parser.add_argument("--speed", type=float, default=1.0, help="Speed multiplier (default: 1.0)")
     parser.add_argument("--verify", action="store_true", help="After replay, verify the result against the golden screenshot")
+    parser.add_argument("--device", help="ADB device serial to replay on (from adb devices)")
     args = parser.parse_args()
 
     if args.speed <= 0:
@@ -235,9 +244,12 @@ def main():
     # Filter out observation commands
     commands = filter_commands(recording["commands"])
 
+    # Build base adb command with optional device targeting
+    base = adb_cmd(adb, args.device)
+
     if commands:
         # Execute first command immediately
-        result = subprocess.run([adb] + commands[0]["args"])
+        result = subprocess.run(base + commands[0]["args"])
         if result.returncode != 0:
             sys.exit(result.returncode)
 
@@ -256,12 +268,12 @@ def main():
             if delay > 0:
                 time.sleep(delay)
 
-            result = subprocess.run([adb] + commands[i]["args"])
+            result = subprocess.run(base + commands[i]["args"])
             if result.returncode != 0:
                 sys.exit(result.returncode)
 
     if args.verify:
-        verify(recording, json_path, adb)
+        verify(recording, json_path, adb, args.device)
 
     sys.exit(0)
 
