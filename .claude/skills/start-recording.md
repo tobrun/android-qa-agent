@@ -11,12 +11,30 @@ Before starting the recording, detect connected devices:
 3. **1 device** → Auto-select it. Pass `--device <serial>` to `./start-recording`.
 4. **Multiple devices** → Use **AskUserQuestion** to let the user pick which device to target. Show each serial as an option, marking the first as "(Recommended)". Pass the chosen serial via `--device <serial>`.
 
+## Performance Tracking
+
+Check the user's prompt for any of these keywords (case-insensitive): "track performance", "capture metrics", "measure performance", "frame rate", "jank", "memory usage", "performance metrics", "fps", "frame drops", "rendering".
+
+If any keyword matches, add `--perf` to the `./start-recording` command below.
+
 ## Start the Session
 
 ```bash
 ./start-recording <session-name> --prompt "<original user prompt>" --device <serial>
 ```
 
+Add `--perf` if performance tracking keywords were detected above.
+
 Always pass the user's original test scenario prompt via `--prompt` so it is retained in the recording metadata.
 
 If a session is already active, it will be auto-stopped and finalized before the new one begins.
+
+## After Launching the App
+
+If `--perf` was used, after the first `am start -n <pkg>/<activity>` command, reset the gfxinfo counters so the test captures fresh frame data:
+
+```bash
+./android-qa shell dumpsys gfxinfo <pkg> reset
+```
+
+Replace `<pkg>` with the package name from the `am start` component (the part before `/`). This command goes through `./android-qa` so it gets recorded and replays correctly.
