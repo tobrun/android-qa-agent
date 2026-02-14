@@ -17,6 +17,21 @@ LOCK_FILE = os.path.join(BASE_DIR, "active-session.json")
 RECORDINGS_DIR = "recordings"
 PERFETTO_TRACE_DEVICE_PATH = "/data/misc/perfetto-traces/trace.perfetto-trace"
 
+# Commands that are observation-only (should not count as interaction steps).
+OBSERVATION_PREFIXES = [
+    ["shell", "screencap"],
+    ["shell", "uiautomator", "dump"],
+    ["pull"],
+]
+
+
+def is_observation_command(args):
+    """Return True if the command is observation-only (screencap, dump, pull)."""
+    for prefix in OBSERVATION_PREFIXES:
+        if args[: len(prefix)] == prefix:
+            return True
+    return False
+
 
 def utcnow():
     """Get current UTC time (suppresses deprecation warning on Python 3.12+)."""
@@ -291,24 +306,45 @@ def finalize_session(lock_data):
     else:
         completed_at = started_at
 
-    # Find the last screenshot: look for the last pull that follows a screencap
-    golden_screenshot = None
-    for i in range(len(commands) - 1, 0, -1):
+    # Find ALL screenshots: look for pull commands that follow a screencap.
+    # Track which interaction command each screenshot follows for multi-step verification.
+    golden_screenshots = []
+    interaction_count = 0
+    for i in range(len(commands)):
         cmd_args = commands[i]["args"]
-        prev_args = commands[i - 1]["args"]
+
+        # Count interaction (non-observation) commands
+        if not is_observation_command(cmd_args):
+            interaction_count += 1
+
+        # Detect screenshot: pull following screencap
         if (
-            len(cmd_args) >= 3
+            i > 0
+            and len(cmd_args) >= 3
             and cmd_args[0] == "pull"
-            and len(prev_args) >= 2
-            and prev_args[0] == "shell"
-            and prev_args[1] == "screencap"
+            and len(commands[i - 1]["args"]) >= 2
+            and commands[i - 1]["args"][0] == "shell"
+            and commands[i - 1]["args"][1] == "screencap"
+            and interaction_count > 0
         ):
             local_path = cmd_args[-1]
             if os.path.exists(local_path):
-                golden_dest = os.path.join(session_dir, "golden.png")
+                idx = len(golden_screenshots) + 1
+                golden_filename = "golden-%03d.png" % idx
+                golden_dest = os.path.join(session_dir, golden_filename)
                 shutil.copy2(local_path, golden_dest)
-                golden_screenshot = "golden.png"
-            break
+                golden_screenshots.append({
+                    "file": golden_filename,
+                    "after_interaction": interaction_count - 1,
+                })
+
+    # Backward compatibility: copy last screenshot as golden.png
+    golden_screenshot = None
+    if golden_screenshots:
+        last_src = os.path.join(session_dir, golden_screenshots[-1]["file"])
+        golden_dest = os.path.join(session_dir, "golden.png")
+        shutil.copy2(last_src, golden_dest)
+        golden_screenshot = "golden.png"
 
     metadata = {
         "name": session_name,
@@ -318,6 +354,8 @@ def finalize_session(lock_data):
     }
     if golden_screenshot:
         metadata["golden_screenshot"] = golden_screenshot
+    if golden_screenshots:
+        metadata["golden_screenshots"] = golden_screenshots
     prompt = lock_data.get("prompt")
     if prompt:
         metadata["prompt"] = prompt

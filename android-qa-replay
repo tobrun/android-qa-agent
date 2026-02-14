@@ -4,6 +4,7 @@
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -172,8 +173,6 @@ def verify(recording, json_path, adb, device_serial=None):
         verdict = json.loads(response_text)
     except json.JSONDecodeError:
         # Try to find JSON in the response
-        import re
-
         match = re.search(r"\{[^}]+\}", response_text)
         if match:
             verdict = json.loads(match.group())
@@ -207,6 +206,117 @@ def verify(recording, json_path, adb, device_serial=None):
     print("Report saved to: %s" % report_path)
 
     sys.exit(0 if passed else 1)
+
+
+def verify_multi(pairs, recording, json_path, adb, device_serial=None):
+    """Run multi-step verification: compare golden screenshots at each checkpoint."""
+    metadata = recording["metadata"]
+    session_name = metadata["name"]
+    session_dir = os.path.dirname(json_path) or os.path.join(RECORDINGS_DIR, session_name)
+    total = len(pairs)
+
+    print("\nMulti-step verification: comparing %d checkpoint%s..." % (total, "s" if total != 1 else ""))
+
+    # Build prompt for Claude
+    prompt_lines = [
+        "You are verifying an Android UI test with %d checkpoint%s." % (total, "s" if total != 1 else ""),
+        "Read these screenshot pairs using the Read tool and compare each pair:",
+        "",
+    ]
+    for i, pair in enumerate(pairs, 1):
+        abs_golden = os.path.abspath(os.path.join(session_dir, pair["golden"]))
+        abs_actual = os.path.abspath(os.path.join(session_dir, pair["actual"]))
+        prompt_lines.append("Step %d:" % i)
+        prompt_lines.append("  Expected (golden): %s" % abs_golden)
+        prompt_lines.append("  Actual (replay):   %s" % abs_actual)
+        prompt_lines.append("")
+
+    prompt_lines.extend([
+        "For each step, determine if the golden and actual screenshots show the same app state.",
+        "Ignore transient differences like the status bar clock, battery level, or notification indicators.",
+        "",
+        'Respond with JSON only: {"steps": [{"step": 1, "pass": true, "reasoning": "brief explanation"}, ...]}',
+    ])
+
+    prompt = "\n".join(prompt_lines)
+
+    print("Verification: invoking Claude for visual comparison (this may take a moment)...")
+    result = subprocess.run(
+        ["claude", "-p", prompt, "--allowedTools", "Read"],
+        capture_output=True,
+        text=True,
+    )
+
+    if result.returncode != 0:
+        print("Error: claude invocation failed.", file=sys.stderr)
+        if result.stderr:
+            print(result.stderr, file=sys.stderr)
+        sys.exit(1)
+
+    # Parse Claude's response — extract JSON from the output
+    response_text = result.stdout.strip()
+
+    # Strip markdown code fences if present
+    fenced = re.search(r"```(?:json)?\s*\n(.*?)```", response_text, re.DOTALL)
+    if fenced:
+        response_text = fenced.group(1).strip()
+
+    try:
+        verdict = json.loads(response_text)
+    except json.JSONDecodeError:
+        # Try to find JSON object in the response (greedy match for nested braces)
+        match = re.search(r"\{[\s\S]*\}", response_text)
+        if match:
+            try:
+                verdict = json.loads(match.group())
+            except json.JSONDecodeError:
+                print("Error: could not parse Claude response as JSON:", file=sys.stderr)
+                print(result.stdout.strip(), file=sys.stderr)
+                sys.exit(1)
+        else:
+            print("Error: could not parse Claude response as JSON:", file=sys.stderr)
+            print(result.stdout.strip(), file=sys.stderr)
+            sys.exit(1)
+
+    steps = verdict.get("steps", [])
+
+    # Print per-step results
+    passed_count = 0
+    for s in steps:
+        step_pass = s.get("pass", False)
+        if step_pass:
+            passed_count += 1
+        status = "PASS" if step_pass else "FAIL"
+        print("  Step %s: %s — %s" % (s.get("step", "?"), status, s.get("reasoning", "")))
+
+    all_passed = passed_count == total
+    status = "PASS" if all_passed else "FAIL"
+    print("\nVerification: %s (%d/%d steps passed)" % (status, passed_count, total))
+
+    # Build and save verification report
+    report = {
+        "pass": all_passed,
+        "summary": "%d/%d steps passed" % (passed_count, total),
+        "steps": [],
+        "verified_at": format_timestamp(utcnow()),
+    }
+    for i, pair in enumerate(pairs):
+        step_data = steps[i] if i < len(steps) else {"pass": False, "reasoning": "no response from verifier"}
+        report["steps"].append({
+            "step": i + 1,
+            "pass": step_data.get("pass", False),
+            "reasoning": step_data.get("reasoning", ""),
+            "golden_screenshot": pair["golden"],
+            "actual_screenshot": pair["actual"],
+        })
+
+    report_path = os.path.join(session_dir, "verify.json")
+    with open(report_path, "w") as f:
+        json.dump(report, f, indent=2)
+        f.write("\n")
+
+    print("Report saved to: %s" % report_path)
+    sys.exit(0 if all_passed else 1)
 
 
 def main():
@@ -247,11 +357,41 @@ def main():
     # Build base adb command with optional device targeting
     base = adb_cmd(adb, args.device)
 
+    # Build checkpoint map for multi-step verification
+    checkpoints = {}
+    if args.verify:
+        for gs in recording["metadata"].get("golden_screenshots", []):
+            checkpoints[gs["after_interaction"]] = gs["file"]
+
+    session_dir = os.path.dirname(json_path) or os.path.join(
+        RECORDINGS_DIR, recording["metadata"]["name"]
+    )
+    actual_screenshots = []
+
+    def capture_checkpoint(interaction_idx):
+        """Capture a checkpoint screenshot if this interaction index has one."""
+        if interaction_idx not in checkpoints:
+            return
+        step_num = len(actual_screenshots) + 1
+        total = len(checkpoints)
+        print("Verification: checkpoint %d/%d — capturing screenshot..." % (step_num, total))
+        time.sleep(1.5)
+        actual_file = "actual-%03d.png" % step_num
+        actual_path = os.path.join(session_dir, actual_file)
+        if take_screenshot(adb, actual_path, args.device):
+            actual_screenshots.append({
+                "golden": checkpoints[interaction_idx],
+                "actual": actual_file,
+            })
+        else:
+            print("Warning: failed to capture checkpoint %d screenshot." % step_num, file=sys.stderr)
+
     if commands:
         # Execute first command immediately
         result = subprocess.run(base + commands[0]["args"])
         if result.returncode != 0:
             sys.exit(result.returncode)
+        capture_checkpoint(0)
 
         # Execute remaining commands with timing
         for i in range(1, len(commands)):
@@ -271,9 +411,14 @@ def main():
             result = subprocess.run(base + commands[i]["args"])
             if result.returncode != 0:
                 sys.exit(result.returncode)
+            capture_checkpoint(i)
 
     if args.verify:
-        verify(recording, json_path, adb, args.device)
+        if actual_screenshots:
+            verify_multi(actual_screenshots, recording, json_path, adb, args.device)
+        else:
+            # Fall back to single-screenshot verification (old recordings)
+            verify(recording, json_path, adb, args.device)
 
     sys.exit(0)
 
