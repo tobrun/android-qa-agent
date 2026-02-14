@@ -41,6 +41,38 @@ Claude will:
 
 Claude is generally good at reasoning about the UI and deciding next steps. Providing project-specific instructions in `CLAUDE.md` helps guide it more efficiently.
 
+## Performance Tracking & Tracing
+
+Performance tracking and Perfetto tracing are automatically enabled when your prompt contains relevant keywords — no flags or extra setup needed.
+
+**Performance tracking** captures frame rendering stats (total frames, janky frames, percentile frame times), memory usage, and CPU info via `adb dumpsys`. Include any of these phrases in your prompt:
+
+```
+open the settings app and track performance while toggling dark mode
+measure performance of scrolling through the contacts list
+capture metrics for the login flow, check for frame drops
+```
+
+Keywords detected: _track performance_, _capture metrics_, _measure performance_, _frame rate_, _jank_, _memory usage_, _performance metrics_, _fps_, _frame drops_, _rendering_.
+
+**Perfetto tracing** captures a system-level trace (graphics, input, scheduling, memory) that can be visualized at [ui.perfetto.dev](https://ui.perfetto.dev). Include any of these phrases in your prompt:
+
+```
+open the maps app and enable tracing while navigating a route
+capture a perfetto trace of the onboarding flow
+trace the app during the search interaction
+```
+
+Keywords detected: _enable tracing_, _systrace_, _perfetto_, _system trace_, _capture trace_, _trace the app_, _tracing_.
+
+Both can be combined in a single prompt:
+
+```
+track performance and enable tracing while scrolling through the photo gallery
+```
+
+When performance tracking is enabled, frame stats are reset after the app launches so the recording captures clean data. When tracing is enabled, the Perfetto trace runs for the duration of the session and is automatically stopped and pulled when the recording ends.
+
 ## Replay and Verification
 
 ![Replaying a recording](example/replay.gif)
