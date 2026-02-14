@@ -83,7 +83,22 @@ When performance tracking is enabled, frame stats are reset after the app launch
 
 Replay preserves relative timing between commands, compressed by the speed factor, and aborts on the first command failure.
 
-The `--verify` flag runs Claude in headless mode (`claude -p`) to compare the final screenshot from replay against the one captured during the original recording. This approach tolerates minor visual differences — such as the system clock or transient UI elements — that are unrelated to the test case.
+The `--verify` flag enables multi-step screenshot verification powered by Claude in headless mode (`claude -p`). During recording, screenshots are captured at key checkpoints (typically after each user interaction). When a recording is finalized, these are saved as `golden-001.png`, `golden-002.png`, etc. alongside metadata tracking which interaction step each checkpoint follows.
+
+During replay with `--verify`, the tool automatically pauses at each checkpoint to capture a fresh screenshot and compares every pair against the original recording. The result is a per-step pass/fail report saved to `verify.json`:
+
+```json
+{
+  "pass": true,
+  "summary": "6/6 steps passed",
+  "steps": [
+    {"step": 1, "pass": true, "reasoning": "...", "golden_screenshot": "golden-001.png", "actual_screenshot": "actual-001.png"},
+    {"step": 2, "pass": true, "reasoning": "...", "golden_screenshot": "golden-002.png", "actual_screenshot": "actual-002.png"}
+  ]
+}
+```
+
+Claude tolerates minor visual differences — such as the system clock or transient UI elements — that are unrelated to the test case. Recordings created before multi-step support was added still work: verification falls back to comparing the final screenshot only.
 
 ## Project Structure
 
@@ -96,7 +111,8 @@ android-qa-agent/
 ├── recordings/             # Finalized recordings, per session (committable)
 │   └── <session>/
 │       ├── recording.json  # Commands and metadata (incl. original prompt)
-│       └── golden.png      # Last screenshot from the recording
+│       ├── golden.png      # Last screenshot (backward compat)
+│       └── golden-NNN.png  # Checkpoint screenshots from recording
 ├── artifacts/              # Screenshots and UI dumps (per session)
 ├── CLAUDE.md               # Claude Code project instructions
 ├── .claude/
@@ -115,7 +131,7 @@ android-qa-agent/
 ## Roadmap
 
 - [x] Multi-device support (current MVP works only on a single ADB device)
-- [ ] Multi-step verification — verify screenshots at every step, not just the final result
+- [x] Multi-step verification — verify screenshots at every step, not just the final result
 - [ ] App state cleanup — start each recording and replay from a known fresh state
 - [ ] UI dump verification alongside screenshot comparison
 - [ ] Complex touch gestures — rotate, pinch, double-tap, and other multi-touch input
