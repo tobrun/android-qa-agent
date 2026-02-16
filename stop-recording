@@ -136,7 +136,7 @@ def parse_cpuinfo(output, package):
 
 def capture_performance(lock_data, commands, session_dir):
     """Capture performance metrics via adb dumpsys and save to performance.json."""
-    package = detect_package(commands)
+    package = lock_data.get("package") or detect_package(commands)
     if not package:
         print("Warning: no 'am start -n' command found — skipping performance capture.", file=sys.stderr)
         return None
@@ -324,6 +324,9 @@ def finalize_session(lock_data):
     device_serial = lock_data.get("device_serial")
     if device_serial:
         metadata["device_serial"] = device_serial
+    package = lock_data.get("package")
+    if package:
+        metadata["package"] = package
 
     # Capture performance metrics if tracking was enabled
     if lock_data.get("performance_tracking"):

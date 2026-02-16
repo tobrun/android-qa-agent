@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import sys
 import warnings
 from datetime import datetime
@@ -114,6 +115,22 @@ def finalize_session(lock_data):
     return len(commands)
 
 
+def run_app_reset(package, script_dir):
+    """Force-stop and clear data for the given package via android-qa."""
+    android_qa = os.path.join(script_dir, "android-qa")
+    for action, cmd_args in [
+        ("Force-stopping", ["shell", "am", "force-stop", package]),
+        ("Clearing data for", ["shell", "pm", "clear", package]),
+    ]:
+        print("%s %s..." % (action, package))
+        result = subprocess.run([android_qa] + cmd_args)
+        if result.returncode != 0:
+            print(
+                "Warning: '%s' exited with code %d" % (" ".join(cmd_args), result.returncode),
+                file=sys.stderr,
+            )
+
+
 def main():
     parser = argparse.ArgumentParser(description="Start a new Android QA recording session.")
     parser.add_argument("session_name", help="Name for the recording session")
@@ -121,6 +138,9 @@ def main():
     parser.add_argument("--device", help="ADB device serial (from adb devices)")
     parser.add_argument("--perf", action="store_true", help="Enable performance tracking (gfxinfo/meminfo/cpuinfo)")
     parser.add_argument("--trace", action="store_true", help="Enable Perfetto system tracing")
+    parser.add_argument("--package", help="Package name of the app under test")
+    parser.add_argument("--no-clear", action="store_true", dest="no_clear",
+                        help="Skip force-stop and clear data")
     args = parser.parse_args()
 
     session_name = args.session_name
@@ -159,6 +179,10 @@ def main():
         lock_data["performance_tracking"] = True
     if args.trace:
         lock_data["perfetto_tracing"] = True
+    if args.package:
+        lock_data["package"] = args.package
+    if args.no_clear:
+        lock_data["no_clear"] = True
     with open(LOCK_FILE, "w") as f:
         json.dump(lock_data, f, indent=2)
         f.write("\n")
@@ -169,10 +193,18 @@ def main():
 
     print("Recording started: '%s'" % session_name)
     print("Recording to: %s" % output_path)
+    if args.package:
+        print("Package: %s" % args.package)
     if args.perf:
         print("Performance tracking: enabled")
     if args.trace:
         print("Perfetto tracing: enabled")
+
+    if args.package and not args.no_clear:
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        run_app_reset(args.package, script_dir)
+    elif args.package and args.no_clear:
+        print("Skipping app reset (--no-clear)")
 
 
 if __name__ == "__main__":

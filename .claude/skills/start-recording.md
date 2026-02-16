@@ -23,18 +23,38 @@ Check the user's prompt for any of these keywords (case-insensitive): "enable tr
 
 If any keyword matches, add `--trace` to the `./start-recording` command below.
 
+## No-Clear Detection
+
+Check the user's prompt for any of these keywords (case-insensitive): "don't clear", "no clear", "preserve state", "keep data", "warm start", "without clearing".
+
+If any keyword matches, add `--no-clear` to the `./start-recording` command below.
+
+## Package Resolution
+
+Before starting the session, resolve the app package name:
+
+1. Extract a keyword from the user's prompt that identifies the app (e.g., "clock", "maps", "contacts", "navigation").
+2. Run `adb -s <serial> shell pm list packages | grep <keyword>` to find matching packages.
+3. **0 matches** → Use **AskUserQuestion** to ask the user for the full package name.
+4. **1 match** → Use it (strip the `package:` prefix).
+5. **Multiple matches** → Use **AskUserQuestion** to let the user pick from the matches. Show each package as an option.
+6. Pass `--package <pkg>` to `./start-recording`.
+
 ## Start the Session
 
 ```bash
-./start-recording <session-name> --prompt "<original user prompt>" --device <serial>
+./start-recording <session-name> --prompt "<original user prompt>" --device <serial> --package <pkg>
 ```
 
 Add `--perf` if performance tracking keywords were detected above.
 Add `--trace` if Perfetto tracing keywords were detected above.
+Add `--no-clear` if no-clear keywords were detected above.
 
 Always pass the user's original test scenario prompt via `--prompt` so it is retained in the recording metadata.
 
 If a session is already active, it will be auto-stopped and finalized before the new one begins.
+
+The `--package` flag causes `start-recording` to automatically force-stop and clear the app's data before the test begins (unless `--no-clear` is also passed).
 
 ## After Launching the App
 

@@ -2,7 +2,11 @@ You are a Senior Androd QA engineer. Use `android-qa` to control an Android devi
 
 ## Session Lifecycle
 
-- **Before executing any `android-qa` commands**, start a recording session: `./start-recording <session-name> --prompt "<original user prompt>"`. Derive the session name from the test scenario (e.g., `open-clock-timer`, `login-flow`). Always pass the user's original prompt via `--prompt`.
+- **Before executing any `android-qa` commands**, start a recording session. Derive the session name from the test scenario (e.g., `open-clock-timer`, `login-flow`). Always pass the user's original prompt via `--prompt`.
+- **Always resolve the app package** before starting the session. Extract a keyword from the user's prompt, run `pm list packages | grep <keyword>`, and pass `--package <pkg>` to `./start-recording`. This ensures the app is force-stopped and its data cleared automatically for a clean test. If the user's prompt contains "don't clear", "no clear", "warm start", or similar, also pass `--no-clear` to skip the reset.
+  ```
+  ./start-recording <session-name> --prompt "<original user prompt>" --device <serial> --package <pkg>
+  ```
 - **Device selection** is handled automatically by the `start-recording` skill: it detects connected devices, auto-selects when only one is present, and prompts via AskUserQuestion when multiple are connected. The selected device serial is stored in the lock file and injected into all `android-qa` commands as `-s <serial>`.
 - **When you are done with a test scenario**, stop the recording: `./stop-recording`. Report the saved file path and command count.
 - A `Stop` hook auto-finalizes the session if you forget or the user interrupts, but you should always call `./stop-recording` explicitly when done.
