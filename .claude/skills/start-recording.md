@@ -69,7 +69,7 @@ Replace `<pkg>` with the package name from the `am start` component (the part be
 If `--trace` was used, after launching the app (and after the gfxinfo reset if `--perf` was also used), start the Perfetto trace in the background:
 
 ```bash
-./android-qa shell perfetto -o /data/misc/perfetto-traces/trace.perfetto-trace -t 300s -d gfx view input am wm dalvik sched freq
+./android-qa shell perfetto -o /data/misc/perfetto-traces/trace.perfetto-trace --no-guardrails -d gfx view input am wm dalvik sched freq
 ```
 
-The `-d` flag detaches immediately. The command is recorded in the session. The trace runs until `./stop-recording` stops it cleanly.
+The `-d` flag detaches immediately and `--no-guardrails` disables duration and size limits so the trace runs for the entire test session. The command is recorded in the session. The trace runs until `./stop-recording` stops it cleanly via SIGTERM.
